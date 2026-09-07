@@ -1,0 +1,9 @@
+{
+  "name": "Quest Map",
+  "short_name": "Quest Map",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#183b25",
+  "theme_color": "#183b25",
+  "description": "A retro fantasy quest-style live GPS map."
+}

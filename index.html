@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no" />
+  <meta name="theme-color" content="#183b25" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Quest Map" />
+  <title>Quest Map</title>
+
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="preconnect" href="https://unpkg.com">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+
+  <style>
+    :root{
+      --ink:#17351f;
+      --cream:#f8e6a8;
+      --gold:#d8a632;
+      --grass:#7fa94c;
+      --panel:#f3d58a;
+      --dark:#183b25;
+      --red:#a7332f;
+    }
+    *{box-sizing:border-box}
+    html,body,#app{margin:0;width:100%;height:100%;overflow:hidden;background:var(--dark);font-family:ui-monospace,Menlo,Monaco,"Courier New",monospace}
+    body{image-rendering:pixelated}
+    #map{position:absolute;inset:0;background:#8cb85a}
+    .leaflet-tile{filter:saturate(.75) sepia(.12) contrast(.94) brightness(1.06)}
+    .leaflet-control-attribution{font-size:8px!important;background:rgba(248,230,168,.8)!important}
+
+    #topHud{
+      position:absolute;z-index:1000;top:max(10px,env(safe-area-inset-top));left:10px;right:10px;
+      display:flex;gap:8px;align-items:center;pointer-events:none
+    }
+    .pixelBox{
+      pointer-events:auto;background:var(--panel);color:var(--ink);
+      border:4px solid var(--dark);box-shadow:4px 4px 0 #102818;
+      padding:9px 10px;border-radius:2px
+    }
+    #status{flex:1;min-width:0}
+    #status strong{display:block;font-size:13px;letter-spacing:.5px}
+    #status small{display:block;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px}
+    .hearts{font-size:15px;color:var(--red);text-shadow:1px 1px 0 #6d211e}
+
+    #searchCard{
+      position:absolute;z-index:1000;left:10px;right:10px;
+      top:calc(max(10px,env(safe-area-inset-top)) + 69px);
+      display:flex;gap:7px
+    }
+    #destination{
+      width:100%;border:0;outline:0;background:#fff4cf;color:var(--ink);
+      font:700 15px ui-monospace,Menlo,monospace;padding:12px
+    }
+    button{
+      border:0;background:var(--dark);color:var(--cream);
+      font:700 12px ui-monospace,Menlo,monospace;padding:11px 12px;
+      box-shadow:3px 3px 0 #0c2013;cursor:pointer
+    }
+    button:active{transform:translate(2px,2px);box-shadow:1px 1px 0 #0c2013}
+
+    #navPanel{
+      position:absolute;z-index:1000;left:10px;right:10px;bottom:calc(10px + env(safe-area-inset-bottom));
+      background:var(--panel);border:4px solid var(--dark);box-shadow:4px 4px 0 #102818;
+      padding:10px;display:none
+    }
+    #navPanel.active{display:block}
+    #nextLine{font-weight:900;font-size:15px;line-height:1.25;color:var(--ink)}
+    #routeMeta{font-size:11px;margin:6px 0 9px;color:#31543a}
+    #navButtons{display:flex;gap:7px}
+    #navButtons button{flex:1}
+    #stopBtn{background:#6f2a28}
+
+    .quest-marker{
+      width:26px;height:26px;background:#f2cf52;border:4px solid #17351f;
+      transform:rotate(45deg);box-shadow:2px 2px 0 #102818
+    }
+    .hero{
+      width:26px;height:26px;border:4px solid #17351f;background:#58a56b;
+      box-shadow:2px 2px 0 #102818;position:relative
+    }
+    .hero:after{
+      content:"";position:absolute;width:6px;height:9px;background:#e6d097;
+      left:6px;top:4px;border:2px solid #17351f
+    }
+    .leaflet-div-icon{background:transparent;border:0}
+    .route-line{stroke-linecap:square;stroke-linejoin:miter}
+
+    #toast{
+      position:absolute;z-index:1200;left:50%;top:45%;transform:translate(-50%,-50%);
+      background:var(--dark);color:var(--cream);padding:14px 16px;border:4px solid var(--gold);
+      font-weight:800;text-align:center;display:none;max-width:80%
+    }
+    #toast.show{display:block}
+  </style>
+</head>
+<body>
+<div id="app">
+  <div id="map"></div>
+
+  <div id="topHud">
+    <div id="status" class="pixelBox">
+      <strong>QUEST MAP <span class="hearts">♥ ♥ ♥</span></strong>
+      <small id="statusText">Finding your position…</small>
+    </div>
+    <button id="centerBtn" aria-label="Center on me">◎</button>
+  </div>
+
+  <div id="searchCard" class="pixelBox">
+    <input id="destination" placeholder="Where shall we quest?" autocomplete="off" />
+    <button id="goBtn">GO</button>
+  </div>
+
+  <div id="navPanel">
+    <div id="nextLine">Choose a destination to begin your quest.</div>
+    <div id="routeMeta"></div>
+    <div id="navButtons">
+      <button id="appleBtn">APPLE MAPS ↗</button>
+      <button id="stopBtn">END QUEST</button>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const $ = s => document.querySelector(s);
+const toast = (msg, ms=2200) => {
+  const t=$("#toast"); t.textContent=msg; t.classList.add("show");
+  setTimeout(()=>t.classList.remove("show"),ms);
+};
+
+const map = L.map("map", {zoomControl:false, attributionControl:true}).setView([26.15,-81.8], 13);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{
+  maxZoom:19, attribution:'© OpenStreetMap'
+}).addTo(map);
+
+let userLatLng=null, heroMarker=null, destination=null, destinationMarker=null;
+let routeLayer=null, route=null, watchId=null, lastReroute=0, centeredOnce=false;
+
+const heroIcon=L.divIcon({className:"",html:'<div class="hero"></div>',iconSize:[26,26],iconAnchor:[13,13]});
+const questIcon=L.divIcon({className:"",html:'<div class="quest-marker"></div>',iconSize:[26,26],iconAnchor:[13,13]});
+
+function distMeters(a,b){
+  const R=6371000, p=Math.PI/180;
+  const dLat=(b.lat-a.lat)*p, dLon=(b.lng-a.lng)*p;
+  const x=Math.sin(dLat/2)**2+Math.cos(a.lat*p)*Math.cos(b.lat*p)*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(x));
+}
+function fmtDist(m){
+  if(m<1000) return Math.max(10,Math.round(m/10)*10)+" m";
+  const mi=m/1609.344;
+  return mi<10?mi.toFixed(1)+" mi":Math.round(mi)+" mi";
+}
+function fmtTime(s){
+  const m=Math.round(s/60);
+  if(m<60)return m+" min";
+  return Math.floor(m/60)+" hr "+(m%60)+" min";
+}
+
+function startGPS(){
+  if(!navigator.geolocation){
+    $("#statusText").textContent="Location is unavailable in this browser.";
+    return;
+  }
+  watchId=navigator.geolocation.watchPosition(pos=>{
+    userLatLng={lat:pos.coords.latitude,lng:pos.coords.longitude};
+    if(!heroMarker) heroMarker=L.marker(userLatLng,{icon:heroIcon,zIndexOffset:1000}).addTo(map);
+    else heroMarker.setLatLng(userLatLng);
+    $("#statusText").textContent="Hero located • GPS ±"+Math.round(pos.coords.accuracy)+" m";
+    if(!centeredOnce){map.setView(userLatLng,16);centeredOnce=true}
+    updateNavigation();
+  },err=>{
+    $("#statusText").textContent="Allow Location Access to use live quest navigation.";
+    toast("LOCATION NEEDED\nSafari → Allow Location");
+  },{enableHighAccuracy:true,maximumAge:3000,timeout:15000});
+}
+
+async function geocode(q){
+  const url="https://nominatim.openstreetmap.org/search?format=json&limit=1&q="+encodeURIComponent(q);
+  const r=await fetch(url,{headers:{"Accept":"application/json"}});
+  if(!r.ok)throw new Error("Place search failed");
+  const d=await r.json();
+  if(!d.length)throw new Error("Place not found");
+  return {lat:+d[0].lat,lng:+d[0].lon,name:d[0].display_name};
+}
+
+async function fetchRoute(){
+  if(!userLatLng||!destination)return;
+  $("#statusText").textContent="Consulting the quest scroll…";
+  const u=`https://router.project-osrm.org/route/v1/driving/${userLatLng.lng},${userLatLng.lat};${destination.lng},${destination.lat}?overview=full&geometries=geojson&steps=true`;
+  const r=await fetch(u);
+  if(!r.ok)throw new Error("Routing failed");
+  const data=await r.json();
+  if(data.code!=="Ok"||!data.routes?.length)throw new Error("No route found");
+  route=data.routes[0];
+  if(routeLayer)map.removeLayer(routeLayer);
+  routeLayer=L.geoJSON(route.geometry,{style:{weight:8,opacity:.8,className:"route-line"}}).addTo(map);
+  map.fitBounds(routeLayer.getBounds(),{padding:[60,60]});
+  $("#navPanel").classList.add("active");
+  $("#statusText").textContent="Quest route ready!";
+  updateNavigation();
+}
+
+function currentStep(){
+  if(!route || !userLatLng) return null;
+  const steps=route.legs?.flatMap(l=>l.steps||[])||[];
+  if(!steps.length)return null;
+  let best=steps[0],bestD=Infinity;
+  for(const st of steps){
+    if(!st.maneuver?.location)continue;
+    const p={lng:st.maneuver.location[0],lat:st.maneuver.location[1]};
+    const d=distMeters(userLatLng,p);
+    if(d<bestD){bestD=d;best=st}
+  }
+  return {step:best,distance:bestD};
+}
+
+function updateNavigation(){
+  if(!route||!destination||!userLatLng)return;
+  const remain=distMeters(userLatLng,destination);
+  if(remain<35){
+    $("#nextLine").textContent="★ QUEST COMPLETE! Destination reached.";
+    $("#routeMeta").textContent="Treasure acquired ✦";
+    return;
+  }
+
+  const cs=currentStep();
+  let inst=cs?.step?.maneuver?.instruction || cs?.step?.name || "Continue on your route";
+  if(cs && cs.distance<120 && cs.step?.maneuver?.type){
+    inst=(cs.step.maneuver.instruction || inst);
+  }
+  $("#nextLine").textContent=inst;
+  $("#routeMeta").textContent=`${fmtDist(remain)} remaining • original route ${fmtTime(route.duration)}`;
+
+  // if the user moves well away from the current route, refresh at most every 20 sec
+  if(routeLayer && Date.now()-lastReroute>20000){
+    const pts=route.geometry.coordinates;
+    let near=Infinity;
+    for(let i=0;i<pts.length;i+=Math.max(1,Math.floor(pts.length/120))){
+      near=Math.min(near,distMeters(userLatLng,{lng:pts[i][0],lat:pts[i][1]}));
+    }
+    if(near>90){lastReroute=Date.now();fetchRoute().catch(()=>{})}
+  }
+}
+
+$("#goBtn").onclick=async()=>{
+  const q=$("#destination").value.trim();
+  if(!q)return toast("ENTER A DESTINATION");
+  if(!userLatLng)return toast("WAITING FOR YOUR GPS LOCATION");
+  try{
+    destination=await geocode(q);
+    if(destinationMarker)map.removeLayer(destinationMarker);
+    destinationMarker=L.marker(destination,{icon:questIcon}).addTo(map);
+    toast("NEW QUEST!");
+    await fetchRoute();
+  }catch(e){toast(e.message.toUpperCase())}
+};
+
+$("#destination").addEventListener("keydown",e=>{if(e.key==="Enter")$("#goBtn").click()});
+$("#centerBtn").onclick=()=>{if(userLatLng)map.setView(userLatLng,17)};
+$("#stopBtn").onclick=()=>{
+  route=null;destination=null;
+  if(routeLayer){map.removeLayer(routeLayer);routeLayer=null}
+  if(destinationMarker){map.removeLayer(destinationMarker);destinationMarker=null}
+  $("#navPanel").classList.remove("active");
+  $("#statusText").textContent="Quest ended • choose another destination.";
+};
+$("#appleBtn").onclick=()=>{
+  if(!destination)return;
+  const d=encodeURIComponent(destination.name || `${destination.lat},${destination.lng}`);
+  location.href=`https://maps.apple.com/directions?destination=${d}&mode=driving`;
+};
+
+startGPS();
+
+if("serviceWorker" in navigator){
+  navigator.serviceWorker.register("./sw.js").catch(()=>{});
+}
+</script>
+</body>
+</html>
